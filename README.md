@@ -37,6 +37,8 @@ npm run dev
 
 Open the Vite URL printed by the client. Confirm the client API base URL in `client/vite.config.js` matches the local server; the server defaults to port `5000`.
 
+Before starting the API, copy `server/.env.example` to `server/.env` and set a unique random `JWT_SECRET` with at least 32 characters. The API refuses to start or authenticate if the secret is missing or too short. Set `CLIENT_ORIGINS` to a comma-separated list only when the browser app is hosted on a different origin; same-origin Vercel deployments need no CORS entry. Run server checks with `cd server && npm test`.
+
 ## Storage and deployment limits
 
 The server stores users, posts, and comments in `server/store.json`. This is suitable only for a local demo: concurrent writes are not coordinated, and many serverless hosts use ephemeral filesystems. The repository's serverless adapter does not turn this JSON file into a durable database. Use a managed database and add production-grade authentication/session protections before hosting real user accounts or content.
