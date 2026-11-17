@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Blog member';
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -21,7 +22,7 @@ export default function Layout() {
               <Link to="/create" className="text-sm text-indigo-600 hover:text-indigo-700 font-medium">Write</Link>
               {user ? (
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-gray-600">{user.name}</span>
+                  <span className="text-sm text-gray-600">{displayName}</span>
                   <button onClick={() => { logout(); navigate('/'); }} className="flex items-center gap-1 text-sm text-gray-500 hover:text-red-600 transition-colors">
                     <LogOut className="w-4 h-4" /> Logout
                   </button>
@@ -40,7 +41,7 @@ export default function Layout() {
               <Link to="/create" className="block text-sm text-indigo-600 font-medium" onClick={() => setMenuOpen(false)}>Write</Link>
               {user ? (
                 <>
-                  <span className="block text-sm text-gray-600">{user.name}</span>
+                  <span className="block text-sm text-gray-600">{displayName}</span>
                   <button onClick={() => { logout(); navigate('/'); setMenuOpen(false); }} className="flex items-center gap-1 text-sm text-red-600">
                     <LogOut className="w-4 h-4" /> Logout
                   </button>

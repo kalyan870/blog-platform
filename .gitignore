@@ -2,5 +2,7 @@ node_modules/
 dist/
 *.db
 .env
+.env.*
+!.env.example
 .vercel
 store.json

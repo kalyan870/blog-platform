@@ -1,47 +1,37 @@
 import { Router } from 'express';
-import { getDb, saveDb } from '../db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { blogRepository } from '../db.js';
+import { requireUser } from '../middleware/auth.js';
+import { getDisplayName } from '../clerk-profile.js';
 
 const router = Router();
+const idIsValid = (id) => /^\d+$/.test(id) && Number(id) > 0;
+const storageError = (res) => res.status(503).json({ error: 'Blog storage is temporarily unavailable' });
 
-router.get('/post/:postId', (req, res) => {
-  const db = getDb();
-  const comments = db.comments
-    .filter(c => c.post_id === parseInt(req.params.postId))
-    .map(c => ({ ...c, author_name: db.users.find(u => u.id === c.author_id)?.name || 'Unknown' }))
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  res.json({ comments });
+router.get('/post/:postId', async (req, res) => {
+  if (!idIsValid(req.params.postId)) return res.status(400).json({ error: 'Invalid post id' });
+  try { res.json({ comments: await blogRepository.listComments(req.params.postId) }); }
+  catch { storageError(res); }
 });
 
-router.post('/post/:postId', authenticateToken, (req, res) => {
-  const { content } = req.body;
-  if (!content || !content.trim()) return res.status(400).json({ error: 'Content is required' });
-
-  const db = getDb();
-  const post = db.posts.find(p => p.id === parseInt(req.params.postId));
-  if (!post) return res.status(404).json({ error: 'Post not found' });
-
-  const comment = {
-    id: Date.now(), post_id: parseInt(req.params.postId),
-    author_id: req.user.id, content: content.trim(),
-    created_at: new Date().toISOString()
-  };
-  db.comments.push(comment);
-  saveDb();
-
-  const author = db.users.find(u => u.id === comment.author_id);
-  res.status(201).json({ comment: { ...comment, author_name: author?.name || 'Unknown' } });
+router.post('/post/:postId', requireUser, async (req, res) => {
+  if (!idIsValid(req.params.postId)) return res.status(400).json({ error: 'Invalid post id' });
+  const { content } = req.body ?? {};
+  if (typeof content !== 'string' || !content.trim() || content.length > 5000) return res.status(400).json({ error: 'Comment must contain 1 to 5000 characters' });
+  try {
+    const post = await blogRepository.getPost(req.params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const authorName = await getDisplayName(req.userId);
+    const comment = await blogRepository.createComment(req.userId, authorName, req.params.postId, content.trim());
+    res.status(201).json({ comment });
+  } catch { storageError(res); }
 });
 
-router.delete('/:id', authenticateToken, (req, res) => {
-  const db = getDb();
-  const idx = db.comments.findIndex(c => c.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Comment not found' });
-  if (db.comments[idx].author_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-
-  db.comments.splice(idx, 1);
-  saveDb();
-  res.json({ message: 'Comment deleted' });
+router.delete('/:id', requireUser, async (req, res) => {
+  if (!idIsValid(req.params.id)) return res.status(400).json({ error: 'Invalid comment id' });
+  try {
+    if (!(await blogRepository.deleteComment(req.userId, req.params.id))) return res.status(404).json({ error: 'Comment not found' });
+    res.json({ message: 'Comment deleted' });
+  } catch { storageError(res); }
 });
 
 export default router;
