@@ -6,7 +6,7 @@ import { ArrowLeft, Clock, User, Trash2, Edit3, MessageSquare } from 'lucide-rea
 
 export default function PostDetail() {
   const { id } = useParams();
-  const { user, token } = useAuth();
+  const { user, getToken } = useAuth();
   const navigate = useNavigate();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
@@ -26,6 +26,7 @@ export default function PostDetail() {
   const handleDelete = async () => {
     if (!confirm('Delete this post?')) return;
     try {
+      const token = await getToken();
       const res = await fetch(`/api/posts/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error();
       toast.success('Post deleted'); navigate('/');
@@ -37,6 +38,7 @@ export default function PostDetail() {
     if (!commentText.trim()) return;
     setSending(true);
     try {
+      const token = await getToken();
       const res = await fetch(`/api/comments/post/${id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ content: commentText.trim() })
@@ -52,6 +54,7 @@ export default function PostDetail() {
 
   const handleDeleteComment = async (commentId) => {
     try {
+      const token = await getToken();
       const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error();
       setComments(prev => prev.filter(c => c.id !== commentId));
