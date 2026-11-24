@@ -1,73 +1,67 @@
 import { Router } from 'express';
-import { getDb, saveDb } from '../db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { blogRepository } from '../db.js';
+import { requireUser } from '../middleware/auth.js';
+import { getDisplayName } from '../clerk-profile.js';
 
 const router = Router();
+const idIsValid = (id) => /^\d+$/.test(id) && Number(id) > 0;
+const storageError = (res) => res.status(503).json({ error: 'Blog storage is temporarily unavailable' });
 
-router.get('/', (req, res) => {
-  const db = getDb();
-  const posts = db.posts.map(p => {
-    const author = db.users.find(u => u.id === p.author_id);
-    const commentCount = db.comments.filter(c => c.post_id === p.id).length;
-    return { ...p, author_name: author?.name || 'Unknown', comment_count: commentCount };
-  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  res.json({ posts });
+router.get('/', async (_req, res) => {
+  try { res.json({ posts: await blogRepository.listPosts() }); }
+  catch { storageError(res); }
 });
 
-router.get('/:id', (req, res) => {
-  const db = getDb();
-  const post = db.posts.find(p => p.id === parseInt(req.params.id));
-  if (!post) return res.status(404).json({ error: 'Post not found' });
-  const author = db.users.find(u => u.id === post.author_id);
-  const comments = db.comments
-    .filter(c => c.post_id === post.id)
-    .map(c => ({ ...c, author_name: db.users.find(u => u.id === c.author_id)?.name || 'Unknown' }))
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  res.json({ post: { ...post, author_name: author?.name || 'Unknown' }, comments });
+router.get('/:id', async (req, res) => {
+  if (!idIsValid(req.params.id)) return res.status(400).json({ error: 'Invalid post id' });
+  try {
+    const post = await blogRepository.getPost(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const comments = await blogRepository.listComments(req.params.id);
+    res.json({ post, comments });
+  } catch { storageError(res); }
 });
 
-router.post('/', authenticateToken, (req, res) => {
-  const { title, content, excerpt } = req.body;
-  if (!title || !title.trim() || !content || !content.trim()) {
-    return res.status(400).json({ error: 'Title and content are required' });
+router.post('/', requireUser, async (req, res) => {
+  const { title, content, excerpt } = req.body ?? {};
+  if (typeof title !== 'string' || !title.trim() || title.length > 200 || typeof content !== 'string' || !content.trim() || content.length > 100000) {
+    return res.status(400).json({ error: 'Title and content are required and must be within the allowed size' });
   }
-
-  const now = new Date().toISOString();
-  const post = {
-    id: Date.now(), author_id: req.user.id,
-    title: title.trim(), content, excerpt: excerpt || content.substring(0, 150) + '...',
-    created_at: now, updated_at: now
-  };
-  getDb().posts.unshift(post);
-  saveDb();
-  res.status(201).json({ post });
+  const safeExcerpt = typeof excerpt === 'string' ? excerpt.trim().slice(0, 300) : `${content.trim().slice(0, 150)}...`;
+  try {
+    const authorName = await getDisplayName(req.userId);
+    const post = await blogRepository.createPost(req.userId, authorName, { title: title.trim(), content, excerpt: safeExcerpt });
+    res.status(201).json({ post });
+  } catch { storageError(res); }
 });
 
-router.put('/:id', authenticateToken, (req, res) => {
-  const db = getDb();
-  const post = db.posts.find(p => p.id === parseInt(req.params.id));
-  if (!post) return res.status(404).json({ error: 'Post not found' });
-  if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-
-  const { title, content, excerpt } = req.body;
-  if (title !== undefined) post.title = title.trim();
-  if (content !== undefined) post.content = content;
-  if (excerpt !== undefined) post.excerpt = excerpt;
-  post.updated_at = new Date().toISOString();
-  saveDb();
-  res.json({ post });
+router.put('/:id', requireUser, async (req, res) => {
+  if (!idIsValid(req.params.id)) return res.status(400).json({ error: 'Invalid post id' });
+  const { title, content, excerpt } = req.body ?? {};
+  if ((title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 200)) ||
+      (content !== undefined && (typeof content !== 'string' || !content.trim() || content.length > 100000)) ||
+      (excerpt !== undefined && (typeof excerpt !== 'string' || excerpt.length > 300))) {
+    return res.status(400).json({ error: 'Invalid post content' });
+  }
+  try {
+    const current = await blogRepository.getPost(req.params.id);
+    if (!current || current.author_id !== req.userId) return res.status(404).json({ error: 'Post not found' });
+    const post = await blogRepository.updatePost(req.userId, req.params.id, {
+      title: title?.trim() ?? current.title,
+      content: content ?? current.content,
+      excerpt: excerpt?.trim() ?? current.excerpt,
+    });
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    res.json({ post });
+  } catch { storageError(res); }
 });
 
-router.delete('/:id', authenticateToken, (req, res) => {
-  const db = getDb();
-  const idx = db.posts.findIndex(p => p.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Post not found' });
-  if (db.posts[idx].author_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-
-  db.posts.splice(idx, 1);
-  db.comments = db.comments.filter(c => c.post_id !== parseInt(req.params.id));
-  saveDb();
-  res.json({ message: 'Post deleted' });
+router.delete('/:id', requireUser, async (req, res) => {
+  if (!idIsValid(req.params.id)) return res.status(400).json({ error: 'Invalid post id' });
+  try {
+    if (!(await blogRepository.deletePost(req.userId, req.params.id))) return res.status(404).json({ error: 'Post not found' });
+    res.json({ message: 'Post deleted' });
+  } catch { storageError(res); }
 });
 
 export default router;
