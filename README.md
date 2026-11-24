@@ -1,51 +1,34 @@
 # Blog Platform
 
-<p align="center"><strong>A full-stack blog prototype with a React reading experience and an Express API for accounts, posts, and comments.</strong></p>
-
-<p align="center">React · Vite · Express · JSON file storage</p>
-
-## Project overview
-
-The client provides registration, login, a post feed, post details, post creation, and comments. The Express server exposes `/api/auth`, `/api/posts`, and `/api/comments`; `api/index.js` adapts the same routes for a serverless entry point.
+BlogVerse is a React/Vite reading and writing app backed by an Express API. Public readers can browse posts and comments; signed-in authors can publish, edit, and delete their own posts and comments.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  U[Reader or author] --> C[React + Vite client]
-  C -->|HTTP /api| A[Express API]
-  A --> R[Auth, posts, comments routes]
-  R --> D[server/db.js JSON store]
-  D --> R --> A --> C
+  U[Reader or author] --> W[React + Clerk]
+  W -->|Bearer session token| A[Express API]
+  A -->|verify session| C[Clerk Backend]
+  A -->|parameterized owner-scoped queries| N[(Neon PostgreSQL)]
 ```
 
-## Run locally
+Clerk is used because the app has user accounts. The API verifies every write session server-side; the publishable key is a browser setting and the secret key stays on the server. Neon stores durable posts and comments. This app has no file-upload flow, so it does not use R2.
 
-Use Node.js. Open two terminals from the repository root:
+## Setup
 
-```bash
-cd server
-npm install
-npm run dev
-```
+1. Copy `server/.env.example` to `server/.env`; set `CLERK_SECRET_KEY` and the server-only `DATABASE_URL`.
+2. Copy `client/.env.example` to `client/.env`; set `VITE_CLERK_PUBLISHABLE_KEY`.
+3. Apply `server/migrations/001_blog.sql` to the Neon database.
+4. Install and run the API from `server/` with `npm install` and `npm run dev`.
+5. Install and run the client from `client/` with `npm install` and `npm run dev`.
 
-```bash
-cd client
-npm install
-npm run dev
-```
+For a cross-origin client, set `CLIENT_ORIGINS` to the exact allowed origins. Same-origin Vercel deployments can leave it empty. Never commit `.env` files or place the Neon connection string or Clerk secret key in `VITE_*` variables.
 
-Open the Vite URL printed by the client. Confirm the client API base URL in `client/vite.config.js` matches the local server; the server defaults to port `5000`.
-
-Before starting the API, copy `server/.env.example` to `server/.env` and set a unique random `JWT_SECRET` with at least 32 characters. The API refuses to start or authenticate if the secret is missing or too short. Set `CLIENT_ORIGINS` to a comma-separated list only when the browser app is hosted on a different origin; same-origin Vercel deployments need no CORS entry. Run server checks with `cd server && npm test`.
-
-## Storage and deployment limits
-
-The server stores users, posts, and comments in `server/store.json`. This is suitable only for a local demo: concurrent writes are not coordinated, and many serverless hosts use ephemeral filesystems. The repository's serverless adapter does not turn this JSON file into a durable database. Use a managed database and add production-grade authentication/session protections before hosting real user accounts or content.
+Run `npm test` from `server/`, `npm run build` from `client/`, and `npm audit` in both packages. Deployment requires the listed Clerk and Neon environment values and the database migration to be applied.
 
 ## Project structure
 
-- `client/` — React pages and components
-- `server/` — Express app, routes, middleware, and JSON data store
-- `api/index.js` — serverless API adapter
-- `vercel.json` — deployment routing
+- `client/` — React pages, Clerk sign-in, and public feed
+- `server/` — Express API, Clerk token verification, and Neon queries
+- `server/migrations/` — versioned PostgreSQL schema
+- `api/index.js` — Vercel serverless adapter

@@ -1,73 +1,58 @@
 import { Router } from 'express';
-import { getDb, saveDb } from '../db.js';
+import { query } from '../db.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = Router();
+const validId = (value) => /^\d+$/.test(value) && Number(value) > 0;
 
-router.get('/', (req, res) => {
-  const db = getDb();
-  const posts = db.posts.map(p => {
-    const author = db.users.find(u => u.id === p.author_id);
-    const commentCount = db.comments.filter(c => c.post_id === p.id).length;
-    return { ...p, author_name: author?.name || 'Unknown', comment_count: commentCount };
-  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  res.json({ posts });
+router.get('/', async (_req, res, next) => {
+  try {
+    const posts = await query`SELECT p.*, count(c.id)::int AS comment_count FROM posts p LEFT JOIN comments c ON c.post_id = p.id GROUP BY p.id ORDER BY p.created_at DESC`;
+    res.json({ posts });
+  } catch (error) { next(error); }
 });
 
-router.get('/:id', (req, res) => {
-  const db = getDb();
-  const post = db.posts.find(p => p.id === parseInt(req.params.id));
-  if (!post) return res.status(404).json({ error: 'Post not found' });
-  const author = db.users.find(u => u.id === post.author_id);
-  const comments = db.comments
-    .filter(c => c.post_id === post.id)
-    .map(c => ({ ...c, author_name: db.users.find(u => u.id === c.author_id)?.name || 'Unknown' }))
-    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  res.json({ post: { ...post, author_name: author?.name || 'Unknown' }, comments });
+router.get('/:id', async (req, res, next) => {
+  if (!validId(req.params.id)) return res.status(400).json({ error: 'Invalid post id.' });
+  try {
+    const [post] = await query`SELECT p.*, count(c.id)::int AS comment_count FROM posts p LEFT JOIN comments c ON c.post_id = p.id WHERE p.id = ${Number(req.params.id)} GROUP BY p.id`;
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    const comments = await query`SELECT id, post_id, author_id, author_name, content, created_at FROM comments WHERE post_id = ${post.id} ORDER BY created_at`;
+    res.json({ post, comments });
+  } catch (error) { next(error); }
 });
 
-router.post('/', authenticateToken, (req, res) => {
-  const { title, content, excerpt } = req.body;
-  if (!title || !title.trim() || !content || !content.trim()) {
-    return res.status(400).json({ error: 'Title and content are required' });
-  }
-
-  const now = new Date().toISOString();
-  const post = {
-    id: Date.now(), author_id: req.user.id,
-    title: title.trim(), content, excerpt: excerpt || content.substring(0, 150) + '...',
-    created_at: now, updated_at: now
-  };
-  getDb().posts.unshift(post);
-  saveDb();
-  res.status(201).json({ post });
+router.post('/', authenticateToken, async (req, res, next) => {
+  const title = typeof req.body.title === 'string' ? req.body.title.trim() : '';
+  const content = typeof req.body.content === 'string' ? req.body.content.trim() : '';
+  const excerpt = typeof req.body.excerpt === 'string' ? req.body.excerpt.trim() : content.slice(0, 150);
+  if (!title || title.length > 180 || !content || content.length > 50000 || excerpt.length > 300) return res.status(400).json({ error: 'Check title, content, and excerpt lengths.' });
+  try {
+    const [post] = await query`INSERT INTO posts (author_id, author_name, title, content, excerpt) VALUES (${req.user.id}, ${req.user.name}, ${title}, ${content}, ${excerpt}) RETURNING *`;
+    res.status(201).json({ post: { ...post, comment_count: 0 } });
+  } catch (error) { next(error); }
 });
 
-router.put('/:id', authenticateToken, (req, res) => {
-  const db = getDb();
-  const post = db.posts.find(p => p.id === parseInt(req.params.id));
-  if (!post) return res.status(404).json({ error: 'Post not found' });
-  if (post.author_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-
-  const { title, content, excerpt } = req.body;
-  if (title !== undefined) post.title = title.trim();
-  if (content !== undefined) post.content = content;
-  if (excerpt !== undefined) post.excerpt = excerpt;
-  post.updated_at = new Date().toISOString();
-  saveDb();
-  res.json({ post });
+router.put('/:id', authenticateToken, async (req, res, next) => {
+  if (!validId(req.params.id)) return res.status(400).json({ error: 'Invalid post id.' });
+  const title = typeof req.body.title === 'string' ? req.body.title.trim() : null;
+  const content = typeof req.body.content === 'string' ? req.body.content.trim() : null;
+  const excerpt = typeof req.body.excerpt === 'string' ? req.body.excerpt.trim() : null;
+  if (title !== null && (!title || title.length > 180) || content !== null && (!content || content.length > 50000) || excerpt !== null && excerpt.length > 300) return res.status(400).json({ error: 'Invalid post fields.' });
+  try {
+    const [post] = await query`UPDATE posts SET title = COALESCE(${title}, title), content = COALESCE(${content}, content), excerpt = COALESCE(${excerpt}, excerpt), updated_at = now() WHERE id = ${Number(req.params.id)} AND author_id = ${req.user.id} RETURNING *`;
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    res.json({ post });
+  } catch (error) { next(error); }
 });
 
-router.delete('/:id', authenticateToken, (req, res) => {
-  const db = getDb();
-  const idx = db.posts.findIndex(p => p.id === parseInt(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Post not found' });
-  if (db.posts[idx].author_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
-
-  db.posts.splice(idx, 1);
-  db.comments = db.comments.filter(c => c.post_id !== parseInt(req.params.id));
-  saveDb();
-  res.json({ message: 'Post deleted' });
+router.delete('/:id', authenticateToken, async (req, res, next) => {
+  if (!validId(req.params.id)) return res.status(400).json({ error: 'Invalid post id.' });
+  try {
+    const deleted = await query`DELETE FROM posts WHERE id = ${Number(req.params.id)} AND author_id = ${req.user.id} RETURNING id`;
+    if (!deleted.length) return res.status(404).json({ error: 'Post not found.' });
+    res.json({ message: 'Post deleted.' });
+  } catch (error) { next(error); }
 });
 
 export default router;

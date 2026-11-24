@@ -1,35 +1,15 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { neon } from '@neondatabase/serverless';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+let sql;
 
-let data;
-
-function defaultData() {
-  return { users: [], posts: [], comments: [] };
+function db() {
+  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
+  sql ??= neon(process.env.DATABASE_URL);
+  return sql;
 }
 
 export async function initDb() {
-  const dbPath = join(__dirname, 'store.json');
-  if (existsSync(dbPath)) {
-    try { data = JSON.parse(readFileSync(dbPath, 'utf-8')); }
-    catch { data = defaultData(); }
-  } else {
-    data = defaultData();
-  }
-  return data;
+  await db()`SELECT 1`;
 }
 
-export function saveDb() {
-  try {
-    const dbPath = join(__dirname, 'store.json');
-    writeFileSync(dbPath, JSON.stringify(data, null, 2));
-  } catch {}
-}
-
-export function getDb() {
-  if (!data) data = defaultData();
-  return data;
-}
+export const query = (strings, ...values) => db()(strings, ...values);
