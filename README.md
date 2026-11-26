@@ -1,8 +1,14 @@
 # Blog Platform
 
 BlogVerse is a full-stack publishing app with public reading, member-authored posts, and comments. Clerk owns user identity, the Express API validates session tokens, and Neon stores durable posts and comments. It has no upload workflow, so it does not add object storage.
+**Live link:** [https://blog-platform-teal-mu.vercel.app](https://blog-platform-teal-mu.vercel.app)
 
 ## Architecture
+
+![blog-platform architecture map](docs/images/blog-platform-architecture.png)
+
+[Architecture notes](docs/architecture.md) · [Editable SVG](docs/images/blog-platform-architecture.svg)
+
 
 ```mermaid
 flowchart LR
